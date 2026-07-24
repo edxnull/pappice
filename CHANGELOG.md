@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.13.0 - 2026-07-24
+
+- Model ticket requesters and creators explicitly and preserve accounts that
+  are referenced by ticket history.
+- Record status transitions transactionally and show them live in ticket
+  conversations.
+- Skip queued mail for disabled accounts and tighten persistence, attachment,
+  notification, and backup error handling.
+- Strengthen API, authorization, migration, failure-path, and browser coverage.
+- Simplify the README and deployment guidance for evaluation and production
+  setup.
+
 ## v0.12.0 - 2026-07-11
 
 - Paginate and optimize the ticket inbox with lightweight summaries, aggregate
