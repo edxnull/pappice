@@ -8,6 +8,7 @@ import { runInPage, waitForDocumentReady } from "../test/tools/browser-page.mjs"
 import { repoRoot, runCommand, startLocalPappice } from "../test/tools/local-pappice.mjs";
 
 const fps = 10;
+const holdScale = 1.25;
 const viewport = { width: 1180, height: 760 };
 const frameRoot = path.join(repoRoot, "demo", ".tmp");
 const framesDir = path.join(frameRoot, "frames");
@@ -48,11 +49,7 @@ async function main() {
 
   const demo = await seedDemoData(page);
   await showLogin(page);
-  await hold(page, 1.6);
-
   await fillLogin(page, demo.customer);
-  await hold(page, 1.1);
-
   await submitLogin(page, demo.customer);
   await hold(page, 1.4);
 
@@ -90,8 +87,9 @@ async function main() {
   await hold(page, 1.6);
 
   const staffReply = "Thanks, we found the broken redirect. The dashboard should load correctly now.";
-  await postStaffReply(demo.admin, ticketKey, staffReply);
-  await refreshTicket(page, ticketKey, staffReply);
+  const staffTicket = await openStaffTicket(demo.admin, ticketKey);
+  await postStaffReply(staffTicket, staffReply);
+  await refreshTicket(page, ticketKey, [staffReply]);
   await hold(page, 2.0);
 
   const finalReply = "I tried, works, thanks.";
@@ -102,6 +100,13 @@ async function main() {
   await hold(page, 0.8);
 
   await confirmReply(page, finalReply);
+  await hold(page, 1.8);
+
+  await resolveTicket(staffTicket);
+  await refreshTicket(page, ticketKey, [
+    finalReply,
+    "changed status from New to Resolved"
+  ]);
   await hold(page, 4.0);
 
   await encodeGif();
@@ -366,20 +371,31 @@ async function confirmReply(page, body) {
   }, { body });
 }
 
-async function postStaffReply(admin, ticketKey, body) {
+async function openStaffTicket(admin, ticketKey) {
   const api = createAPIClient(app.appURL);
   await api("/api/login", {
     method: "POST",
     body: { email: admin.email, password: admin.password }
   });
   const ticket = await api(`/api/tickets/key/${encodeURIComponent(ticketKey)}`);
-  await api(`/api/tickets/${ticket.id}/comments`, {
+  return { api, id: ticket.id };
+}
+
+async function postStaffReply(ticket, body) {
+  await ticket.api(`/api/tickets/${ticket.id}/comments`, {
     method: "POST",
     body: { body, visibility: "public" }
   });
 }
 
-async function refreshTicket(page, ticketKey, expectedText) {
+async function resolveTicket(ticket) {
+  await ticket.api(`/api/tickets/${ticket.id}`, {
+    method: "PATCH",
+    body: { status: "resolved" }
+  });
+}
+
+async function refreshTicket(page, ticketKey, expectedTexts) {
   await page.send("Page.navigate", { url: `${app.appURL}/tickets#${encodeURIComponent(ticketKey)}` });
   await page.send("Page.reload", { ignoreCache: true });
   await waitForDocumentReady(page);
@@ -387,11 +403,11 @@ async function refreshTicket(page, ticketKey, expectedText) {
     const { waitFor } = pageTools();
     await waitFor(() => {
       const pane = document.querySelector("#ticketDetailPane");
-      return pane?.textContent.includes(input.expectedText) &&
+      return input.expectedTexts.every((text) => pane?.textContent.includes(text)) &&
         pane.querySelector(".attachment-image-preview[alt='billing-dashboard.png']");
-    }, "demo staff reply visible to customer", 12000);
+    }, "demo conversation update visible to customer", 12000);
     return true;
-  }, { expectedText });
+  }, { expectedTexts });
 }
 
 function createAPIClient(baseURL) {
@@ -452,7 +468,7 @@ function httpsRequest(target, { body, headers, method }) {
 }
 
 async function hold(page, seconds) {
-  const frames = Math.max(1, Math.round(seconds * fps));
+  const frames = Math.max(1, Math.round(seconds * holdScale * fps));
   for (let index = 0; index < frames; index += 1) {
     await captureFrame(page);
     await sleep(1000 / fps);
