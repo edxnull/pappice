@@ -242,8 +242,6 @@ func appAuditEventInput(event store.DomainEvent, payload store.AppEventPayload) 
 func ticketAuditEventInput(event store.DomainEvent, payload store.TicketEventPayload, ticket store.Ticket) store.CreateAuditEvent {
 	details := map[string]any{"product_id": ticket.ProductID}
 	switch event.Type {
-	case "ticket.created":
-		details["source"] = payload.Source
 	case "ticket.updated":
 		details["previous_status"] = payload.PreviousStatus
 		details["current_status"] = payload.CurrentStatus
@@ -283,10 +281,8 @@ func (s *Server) ticketEventEmails(event string, ticket store.Ticket, actor stor
 	switch event {
 	case "ticket.created":
 		notifyStaff = true
-		if payload.Source == "portal" {
-			notifyRequester = true
-			requesterActorName = "Pappice Support"
-		}
+		notifyRequester = true
+		requesterActorName = "Pappice Support"
 	case "ticket.updated":
 		notifyStaff = payload.HasPatch
 		notifyRequester = payload.PreviousStatus != payload.CurrentStatus && requesterTerminalStatus(payload.CurrentStatus) && actor.UserID != ticket.RequesterUserID

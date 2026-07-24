@@ -32,6 +32,7 @@ export const state = {
     hasMore: false
   },
   assignees: [],
+  requesters: [],
   products: [],
   users: [],
   members: [],

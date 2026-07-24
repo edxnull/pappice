@@ -47,8 +47,14 @@ func TestStoreCreateUpdateCommentAndReload(t *testing.T) {
 	if ticket.ProductKey != products[0].Key || ticket.ProductName != products[0].Name {
 		t.Fatalf("ticket product labels = key %q name %q", ticket.ProductKey, ticket.ProductName)
 	}
-	if ticket.RequesterName != "Alice Admin" {
-		t.Fatalf("requester name = %q, want account display name", ticket.RequesterName)
+	if ticket.RequesterUserID != admin.ID || ticket.CreatedByUserID != admin.ID ||
+		ticket.RequesterName != "Alice Admin" || ticket.CreatedByName != "Alice Admin" {
+		t.Fatalf("ticket identity = %#v", ticket)
+	}
+	for _, column := range []string{"requester_user_id", "created_by_user_id"} {
+		if _, err := tracker.db.Exec(`UPDATE tickets SET `+column+` = NULL WHERE id = ?`, ticket.ID); err == nil {
+			t.Fatalf("%s accepted NULL", column)
+		}
 	}
 	byKey, err := tracker.GetTicketByKey(ticket.Key)
 	if err != nil {
@@ -283,7 +289,7 @@ func TestBaselineMigrationRejectsUnsupportedUsernameSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect migration: %v", err)
 	}
-	if status.CurrentVersion != 0 || len(status.Pending) != 3 || status.Pending[0].Name != "baseline_schema" || status.Pending[1].Name != "rename_product_roles" || status.Pending[2].Name != "normalize_relational_data" {
+	if status.CurrentVersion != 0 || len(status.Pending) != 4 || status.Pending[0].Name != "baseline_schema" || status.Pending[1].Name != "rename_product_roles" || status.Pending[2].Name != "normalize_relational_data" || status.Pending[3].Name != "require_ticket_participants" {
 		t.Fatalf("migration status = %#v", status)
 	}
 	if _, err := Migrate(path, MigrationOptions{DryRun: true}); !errors.Is(err, ErrMigrationRequired) {
@@ -365,14 +371,14 @@ func TestMigrateRenamesProductRoles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect before migration: %v", err)
 	}
-	if status.CurrentVersion != 1 || len(status.Pending) != 2 || status.Pending[0].Name != "rename_product_roles" || status.Pending[1].Name != "normalize_relational_data" {
+	if status.CurrentVersion != 1 || len(status.Pending) != 3 || status.Pending[0].Name != "rename_product_roles" || status.Pending[1].Name != "normalize_relational_data" || status.Pending[2].Name != "require_ticket_participants" {
 		t.Fatalf("before migration status = %#v", status)
 	}
 	result, err := Migrate(path, MigrationOptions{})
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if len(result.Applied) != 2 || result.Applied[0].Name != "rename_product_roles" || result.Applied[1].Name != "normalize_relational_data" {
+	if len(result.Applied) != 3 || result.Applied[0].Name != "rename_product_roles" || result.Applied[1].Name != "normalize_relational_data" || result.Applied[2].Name != "require_ticket_participants" {
 		t.Fatalf("applied migrations = %#v", result.Applied)
 	}
 
@@ -475,7 +481,7 @@ func TestMigrateRelationalData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if len(result.Applied) != 1 || result.Applied[0].Name != "normalize_relational_data" {
+	if len(result.Applied) != 2 || result.Applied[0].Name != "normalize_relational_data" || result.Applied[1].Name != "require_ticket_participants" {
 		t.Fatalf("applied migrations = %#v", result.Applied)
 	}
 	db, err = sql.Open("sqlite", path)
@@ -483,7 +489,7 @@ func TestMigrateRelationalData(t *testing.T) {
 		t.Fatalf("reopen db: %v", err)
 	}
 	defer db.Close()
-	for _, column := range []string{"assignee", "severity", "reporter", "requester_name", "requester_email", "customer_token"} {
+	for _, column := range []string{"assignee", "severity", "reporter", "requester_name", "requester_email", "customer_token", "source", "customer_facing"} {
 		if legacy, err := tableHasColumn(db, "tickets", column); err != nil || legacy {
 			t.Fatalf("legacy ticket column %q exists = %v err=%v", column, legacy, err)
 		}
@@ -493,25 +499,32 @@ func TestMigrateRelationalData(t *testing.T) {
 			t.Fatalf("legacy actor column in %q exists = %v err=%v", table, legacy, err)
 		}
 	}
-	rows, err := db.Query(`SELECT COALESCE(assignee_user_id, 0), COALESCE(requester_user_id, 0) FROM tickets ORDER BY id`)
+	rows, err := db.Query(`
+		SELECT COALESCE(assignee_user_id, 0), COALESCE(requester_user_id, 0),
+		       COALESCE(created_by_user_id, 0)
+		FROM tickets ORDER BY id`)
 	if err != nil {
 		t.Fatalf("query assignments: %v", err)
 	}
 	defer rows.Close()
-	var assignees, requesters []int64
+	var assignees, requesters, creators []int64
 	for rows.Next() {
-		var assigneeID, requesterID int64
-		if err := rows.Scan(&assigneeID, &requesterID); err != nil {
+		var assigneeID, requesterID, creatorID int64
+		if err := rows.Scan(&assigneeID, &requesterID, &creatorID); err != nil {
 			t.Fatalf("scan assignment: %v", err)
 		}
 		assignees = append(assignees, assigneeID)
 		requesters = append(requesters, requesterID)
+		creators = append(creators, creatorID)
 	}
 	if want := []int64{1, 0}; !slices.Equal(assignees, want) {
 		t.Fatalf("migrated assignments = %#v, want %#v", assignees, want)
 	}
 	if want := []int64{1, 2}; !slices.Equal(requesters, want) {
 		t.Fatalf("migrated requesters = %#v, want %#v", requesters, want)
+	}
+	if !slices.Equal(creators, requesters) {
+		t.Fatalf("migrated creators = %#v, want %#v", creators, requesters)
 	}
 	var comments int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM comments WHERE ticket_id = 1`).Scan(&comments); err != nil || comments != 1 {
@@ -526,6 +539,32 @@ func TestMigrateRelationalData(t *testing.T) {
 	}
 	if auditEmail != "staff@example.test" || eventEmail != auditEmail {
 		t.Fatalf("migrated actor emails = audit %q event %q", auditEmail, eventEmail)
+	}
+}
+
+func TestTicketParticipantMigrationRejectsMissingRequester(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+		CREATE TABLE tickets (
+			id INTEGER PRIMARY KEY,
+			requester_user_id INTEGER
+		);
+		INSERT INTO tickets (id) VALUES (1);
+	`); err != nil {
+		t.Fatalf("create legacy tickets: %v", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin migration: %v", err)
+	}
+	defer tx.Rollback()
+	err = migrateTicketParticipants(tx)
+	if !errors.Is(err, ErrMigrationRequired) || !strings.Contains(err.Error(), "tickets without requesters: 1") {
+		t.Fatalf("migration error = %v, want missing requester guidance", err)
 	}
 }
 
@@ -795,7 +834,7 @@ func TestApplyDomainEventProjectionIsTransactional(t *testing.T) {
 			TargetType:  "ticket",
 			TargetID:    77,
 			TargetName:  "PME-77",
-			DetailsJSON: `{"source":"portal"}`,
+			DetailsJSON: `{"kind":"test"}`,
 		},
 		EmailNotifications: []CreateEmailNotification{{
 			ProductID:      productID,
@@ -825,7 +864,7 @@ func TestApplyDomainEventProjectionIsTransactional(t *testing.T) {
 		t.Fatalf("processed event = %#v", processed)
 	}
 	audits := mustListAuditEvents(t, tracker, 10)
-	if len(audits) != 1 || audits[0].DomainEventID != event.ID || audits[0].DetailsJSON != `{"source":"portal"}` {
+	if len(audits) != 1 || audits[0].DomainEventID != event.ID || audits[0].DetailsJSON != `{"kind":"test"}` {
 		t.Fatalf("audits = %#v", audits)
 	}
 	emails := mustListEmailNotifications(t, tracker, 10)
@@ -1849,7 +1888,7 @@ func TestEmailRecipientsAndOutbox(t *testing.T) {
 	}
 }
 
-func TestPortalTicketRequesterUsesUserRelation(t *testing.T) {
+func TestCustomerTicketRequesterUsesUserRelation(t *testing.T) {
 	tracker, err := Open(filepath.Join(t.TempDir(), "tracker.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -1878,9 +1917,9 @@ func TestPortalTicketRequesterUsesUserRelation(t *testing.T) {
 		ActorUserID: customer.ID,
 	})
 	if err != nil {
-		t.Fatalf("create portal ticket: %v", err)
+		t.Fatalf("create customer ticket: %v", err)
 	}
-	if ticket.Source != "portal" || ticket.RequesterUserID != customer.ID || ticket.RequesterName != "Customer" || ticket.RequesterEmail != customer.Email {
+	if ticket.RequesterUserID != customer.ID || ticket.CreatedByUserID != customer.ID || ticket.CreatedByName != "Customer" || ticket.RequesterName != "Customer" || ticket.RequesterEmail != customer.Email {
 		t.Fatalf("ticket fields = %#v", ticket)
 	}
 	newName, newEmail := "Renamed Customer", "renamed@example.test"
@@ -1893,6 +1932,107 @@ func TestPortalTicketRequesterUsesUserRelation(t *testing.T) {
 	}
 	if updated.RequesterUserID != customer.ID || updated.RequesterName != newName || updated.RequesterEmail != newEmail {
 		t.Fatalf("updated requester = %#v", updated)
+	}
+}
+
+func TestStaffCreatesTicketForProductCustomer(t *testing.T) {
+	tracker, err := Open(filepath.Join(t.TempDir(), "tracker.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	admin, err := tracker.CreateFirstAdmin(CreateUser{Email: "admin@example.test", Password: "correct horse"})
+	if err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+	productID := mustListProducts(t, tracker, admin)[0].ID
+	staff, err := tracker.CreateUser(CreateUser{DisplayName: "Support", Email: "staff@example.test", Password: "correct horse", Role: "staff"})
+	if err != nil {
+		t.Fatalf("create staff: %v", err)
+	}
+	customer, err := tracker.CreateUser(CreateUser{DisplayName: "Customer", Email: "customer@example.test", Password: "correct horse", Role: "customer"})
+	if err != nil {
+		t.Fatalf("create customer: %v", err)
+	}
+	otherCustomer, err := tracker.CreateUser(CreateUser{Email: "other@example.test", Password: "correct horse", Role: "customer"})
+	if err != nil {
+		t.Fatalf("create other customer: %v", err)
+	}
+	outsideCustomer, err := tracker.CreateUser(CreateUser{Email: "outside@example.test", Password: "correct horse", Role: "customer"})
+	if err != nil {
+		t.Fatalf("create outside customer: %v", err)
+	}
+	disabledCustomer, err := tracker.CreateUser(CreateUser{Email: "disabled@example.test", Password: "correct horse", Role: "customer"})
+	if err != nil {
+		t.Fatalf("create disabled customer: %v", err)
+	}
+	if _, err := tracker.UpsertProductMember(productID, UpsertProductMember{UserID: staff.ID, Role: "staff"}); err != nil {
+		t.Fatalf("add staff member: %v", err)
+	}
+	if _, err := tracker.UpsertProductMember(productID, UpsertProductMember{UserID: customer.ID, Role: "customer"}); err != nil {
+		t.Fatalf("add customer member: %v", err)
+	}
+	if _, err := tracker.UpsertProductMember(productID, UpsertProductMember{UserID: otherCustomer.ID, Role: "customer"}); err != nil {
+		t.Fatalf("add other customer member: %v", err)
+	}
+	if _, err := tracker.UpsertProductMember(productID, UpsertProductMember{UserID: disabledCustomer.ID, Role: "customer"}); err != nil {
+		t.Fatalf("add disabled customer member: %v", err)
+	}
+	disabled := true
+	if _, err := tracker.UpdateUser(disabledCustomer.ID, UpdateUser{Disabled: &disabled}); err != nil {
+		t.Fatalf("disable customer: %v", err)
+	}
+
+	ticket, err := tracker.CreateTicketWithAttachments(CreateTicket{
+		ProductID:       productID,
+		Title:           "Customer cannot sign in",
+		AssigneeUserID:  staff.ID,
+		RequesterUserID: customer.ID,
+		ActorUserID:     staff.ID,
+	}, []CreateAttachment{{Filename: "details.txt", ContentType: "text/plain", StorageKey: "details.txt"}})
+	if err != nil {
+		t.Fatalf("create ticket for customer: %v", err)
+	}
+	if ticket.RequesterUserID != customer.ID || ticket.CreatedByUserID != staff.ID || ticket.CreatedByName != "Support" || ticket.AssigneeUserID != staff.ID {
+		t.Fatalf("ticket = %#v", ticket)
+	}
+	if len(ticket.Attachments) != 1 || ticket.Attachments[0].CreatedByUserID != staff.ID {
+		t.Fatalf("ticket attachments = %#v", ticket.Attachments)
+	}
+	events := mustListDomainEvents(t, tracker, 10)
+	if len(events) != 1 || events[0].ActorUserID != staff.ID || events[0].ActorEmail != staff.Email {
+		t.Fatalf("ticket events = %#v", events)
+	}
+	requesters, err := tracker.ListProductRequesters(staff)
+	if err != nil {
+		t.Fatalf("list product requesters: %v", err)
+	}
+	if len(requesters) != 2 || requesters[0].UserID != customer.ID || requesters[1].UserID != otherCustomer.ID {
+		t.Fatalf("product requesters = %#v", requesters)
+	}
+	customerSummary, err := tracker.TicketSummaryForUser(customer, ticket.ID)
+	if err != nil || !customerSummary.HasUnread {
+		t.Fatalf("customer ticket summary = %#v err=%v, want unread", customerSummary, err)
+	}
+	staffSummary, err := tracker.TicketSummaryForUser(staff, ticket.ID)
+	if err != nil || staffSummary.HasUnread {
+		t.Fatalf("creator ticket summary = %#v err=%v, want read", staffSummary, err)
+	}
+
+	tests := []struct {
+		name  string
+		input CreateTicket
+	}{
+		{"customer chooses another requester", CreateTicket{ProductID: productID, Title: "Forged requester", RequesterUserID: otherCustomer.ID, ActorUserID: customer.ID}},
+		{"requester is not a product member", CreateTicket{ProductID: productID, Title: "Wrong product", RequesterUserID: outsideCustomer.ID, ActorUserID: staff.ID}},
+		{"requester is disabled", CreateTicket{ProductID: productID, Title: "Disabled requester", RequesterUserID: disabledCustomer.ID, ActorUserID: staff.ID}},
+		{"requester is not a customer", CreateTicket{ProductID: productID, Title: "Wrong role", RequesterUserID: staff.ID, ActorUserID: admin.ID}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := tracker.CreateTicket(test.input); !errors.Is(err, ErrValidation) {
+				t.Fatalf("create ticket error = %v, want ErrValidation", err)
+			}
+		})
 	}
 }
 

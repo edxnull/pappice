@@ -43,6 +43,7 @@ var orderedMigrations = []migration{
 	{Version: 1, Name: "baseline_schema", Up: migrateBaselineSchema},
 	{Version: 2, Name: "rename_product_roles", Up: migrateRenameProductRoles},
 	{Version: 3, Name: "normalize_relational_data", Up: migrateRelationalData},
+	{Version: 4, Name: "require_ticket_participants", Up: migrateTicketParticipants},
 }
 
 func CurrentSchemaVersion() int {
@@ -422,6 +423,55 @@ func migrateRelationalData(tx *sql.Tx) error {
 		}
 	}
 	return nil
+}
+
+func migrateTicketParticipants(tx *sql.Tx) error {
+	hasTickets, err := tableExists(tx, "tickets")
+	if err != nil || !hasTickets {
+		return err
+	}
+	hasCreator, err := tableHasColumn(tx, "tickets", "created_by_user_id")
+	if err != nil {
+		return err
+	}
+	if hasCreator {
+		return nil
+	}
+	var missingRequesters int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM tickets WHERE requester_user_id IS NULL`).Scan(&missingRequesters); err != nil {
+		return err
+	}
+	if missingRequesters != 0 {
+		return fmt.Errorf("%w: tickets without requesters: %d; assign one before migrating", ErrMigrationRequired, missingRequesters)
+	}
+	_, err = tx.Exec(`
+		CREATE TABLE tickets_with_participants (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+			number INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL,
+			priority TEXT NOT NULL,
+			assignee_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+			requester_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+			created_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			closed_at TEXT,
+			UNIQUE (product_id, number)
+		);
+		INSERT INTO tickets_with_participants (
+			id, product_id, number, title, description, status, priority, assignee_user_id,
+			requester_user_id, created_by_user_id, created_at, updated_at, closed_at
+		)
+		SELECT id, product_id, number, title, description, status, priority, assignee_user_id,
+			requester_user_id, requester_user_id, created_at, updated_at, closed_at
+		FROM tickets;
+		DROP TABLE tickets;
+		ALTER TABLE tickets_with_participants RENAME TO tickets;
+	`)
+	return err
 }
 
 type tableQueryer interface {

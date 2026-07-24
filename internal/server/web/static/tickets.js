@@ -310,6 +310,8 @@ function ticketConversationRevision(ticket) {
     ticket.requester_user_id || 0,
     ticket.requester_name || "",
     ticket.requester_email || "",
+    ticket.created_by_user_id || 0,
+    ticket.created_by_name || "",
     ticket.created_at || "",
     attachmentRevision(ticket.attachments),
     (ticket.comments || []).map((comment) => [
@@ -887,7 +889,6 @@ function openTicketCreateModal() {
   }
   const content = el("div", { className: "ticket-create-modal" }, [
     ticketCreateFlow({
-      ticket: { title: "", description: "", priority: "" },
       productId: null,
       creatableProducts
     })
@@ -917,20 +918,22 @@ function confirmTicketCreate(data, form) {
   const payload = ticketCreatePayload(data);
   const files = selectedFiles(form);
   const product = currentProduct(payload.product_id);
+  const details = [
+    ["Product", product ? productDisplayName(product) : "Selected product"],
+    ["Priority", labelize(payload.priority)],
+    ["Attachments", files.length === 0 ? "None" : String(files.length)]
+  ];
+  if (!isCustomer()) details.splice(1, 0, ["Requester", requesterLabel(payload.requester_user_id)]);
   return confirmAction({
     title: "Create this ticket?",
     body: "The ticket will be opened and visible to the people who can access this product.",
     confirmLabel: "Create Ticket",
     stacked: true,
-    details: [
-      ["Product", product ? productDisplayName(product) : "Selected product"],
-      ["Priority", labelize(payload.priority)],
-      ["Attachments", files.length === 0 ? "None" : String(files.length)]
-    ]
+    details
   });
 }
 
-function ticketCreateFlow({ ticket, productId, creatableProducts }) {
+function ticketCreateFlow({ productId, creatableProducts }) {
   const productOptions = [
     { value: "", label: "Choose product" },
     ...ticketProductOptions(creatableProducts)
@@ -940,41 +943,50 @@ function ticketCreateFlow({ ticket, productId, creatableProducts }) {
     ...selectOptions(state.meta.priorities)
   ];
   const productValue = productId && creatableProducts.some((product) => product.id === productId) ? String(productId) : "";
-  return el("div", { className: "ticket-create-flow" }, [
-    ticketCreateStep("1", "Product", [
-      ticketSelectField("", "product_id", productValue, productOptions, {
-        ariaLabel: "Product",
-        required: true
-      })
-    ]),
-    ticketCreateStep("2", "Priority", [
-      ticketSelectField("", "priority", ticket?.priority || "", priorityOptions, {
-        ariaLabel: "Priority",
-        required: true
-      })
-    ]),
-    ticketCreateStep("3", "Ticket", [
-      ticketTextField("", "title", ticket?.title || "", {
-        autocomplete: "off",
-        className: "ticket-title-input",
-        maxlength: 160,
-        placeholder: "Title",
-        required: true
-      }),
-      ticketTextareaField("", "description", ticket?.description || "", {
-        className: "ticket-description-input",
-        placeholder: "Describe the request, impact, and useful context.",
-        required: true,
-        rows: 7
-      }),
-      ticketAttachmentField("", "attachments")
-    ])
+  const steps = [];
+  const addStep = (title, content) => steps.push(ticketCreateStep(steps.length + 1, title, content));
+  addStep("Product", [
+    ticketSelectField("", "product_id", productValue, productOptions, {
+      ariaLabel: "Product",
+      required: true
+    })
   ]);
+  if (!isCustomer()) {
+    addStep("Requester", [
+      ticketSelectField("", "requester_user_id", String(state.user?.id || ""), requesterOptions(Number(productValue)), {
+        ariaLabel: "Requester",
+        required: true
+      })
+    ]);
+  }
+  addStep("Priority", [
+    ticketSelectField("", "priority", "", priorityOptions, {
+      ariaLabel: "Priority",
+      required: true
+    })
+  ]);
+  addStep("Ticket", [
+    ticketTextField("", "title", "", {
+      autocomplete: "off",
+      className: "ticket-title-input",
+      maxlength: 160,
+      placeholder: "Title",
+      required: true
+    }),
+    ticketTextareaField("", "description", "", {
+      className: "ticket-description-input",
+      placeholder: "Describe the request, impact, and useful context.",
+      required: true,
+      rows: 7
+    }),
+    ticketAttachmentField("", "attachments")
+  ]);
+  return el("div", { className: "ticket-create-flow" }, steps);
 }
 
 function ticketCreateStep(number, title, content) {
-  return el("section", { className: "ticket-create-step", "data-create-step": number }, [
-    el("span", { className: "ticket-create-step-number" }, number),
+  return el("section", { className: "ticket-create-step", "data-create-step": "true" }, [
+    el("span", { className: "ticket-create-step-number" }, String(number)),
     el("div", { className: "ticket-create-step-body" }, [
       el("div", { className: "ticket-create-step-head" }, [
         el("h4", {}, title)
@@ -1036,11 +1048,11 @@ function applyTicketControlOptions(control, options) {
 }
 
 function requesterBlock(ticket) {
-  if (ticket.source !== "portal") return null;
+  if (!ticket.requester_user_id) return null;
   const block = el("div", { className: "requester-block" });
   block.append(
     el("strong", {}, ticket.requester_name || "Unknown"),
-    el("span", {}, ticket.requester_email || "Deleted account")
+    el("span", {}, ticket.requester_email || "")
   );
   return block;
 }
@@ -1085,6 +1097,7 @@ function ticketCreatePayload(data, fallbackProductId) {
     description: String(data.description || "").trim(),
     priority: String(data.priority || "normal").trim() || "normal",
     product_id: Number(data.product_id || fallbackProductId),
+    requester_user_id: Number(data.requester_user_id) || undefined,
     title: String(data.title || "").trim()
   };
 }
@@ -1293,29 +1306,54 @@ function clearCommentDraft(ticket) {
 
 function bindTicketCreateState({ root, submitButton }) {
   const product = root.querySelector("[name='product_id']");
+  const requester = root.querySelector("[name='requester_user_id']");
   const priority = root.querySelector("[name='priority']");
   const title = root.querySelector("[name='title']");
   const description = root.querySelector("[name='description']");
   const steps = Array.from(root.querySelectorAll("[data-create-step]"));
   const update = () => {
-    const hasProduct = Boolean(product?.value);
-    const hasPriority = Boolean(priority?.value);
+    if (requester) syncRequesterOptions(requester, Number(product?.value));
     const hasTitle = String(title?.value || "").trim() !== "";
     const hasDescription = String(description?.value || "").trim() !== "";
-    updateTicketCreateStep(steps[0], { enabled: true, active: !hasProduct, complete: hasProduct });
-    updateTicketCreateStep(steps[1], { enabled: hasProduct, active: hasProduct && !hasPriority, complete: hasProduct && hasPriority });
-    updateTicketCreateStep(steps[2], {
-      enabled: hasProduct && hasPriority,
-      active: hasProduct && hasPriority,
-      complete: hasProduct && hasPriority && hasTitle && hasDescription
+    let ready = true;
+    const gates = [product, requester, priority].filter(Boolean);
+    gates.forEach((control, index) => {
+      const complete = ready && Boolean(control.value);
+      updateTicketCreateStep(steps[index], { enabled: ready, active: ready && !complete, complete });
+      ready = complete;
     });
-    if (submitButton) submitButton.disabled = !(hasProduct && hasPriority && hasTitle && hasDescription);
+    const complete = ready && hasTitle && hasDescription;
+    updateTicketCreateStep(steps[gates.length], { enabled: ready, active: ready, complete });
+    if (submitButton) submitButton.disabled = !complete;
   };
   root.querySelectorAll("[data-ticket-control]").forEach((control) => {
     control.addEventListener("input", update);
     control.addEventListener("change", update);
   });
   update();
+}
+
+function requesterOptions(productID) {
+  const options = [
+    { value: String(state.user?.id || ""), label: `${accountLabel(state.user)} (myself)` }
+  ];
+  for (const account of state.requesters) {
+    if (account.product_id === productID) options.push({ value: String(account.user_id), label: accountLabel(account) });
+  }
+  return options;
+}
+
+function requesterLabel(userID) {
+  if (Number(userID) === state.user?.id) return `${accountLabel(state.user)} (myself)`;
+  return accountLabel(state.requesters.find((account) => account.user_id === Number(userID)));
+}
+
+function syncRequesterOptions(control, productID) {
+  if (control.dataset.productId === String(productID)) return;
+  const current = control.value;
+  control.replaceChildren(...requesterOptions(productID).map((option) => new Option(option.label, option.value)));
+  control.value = [...control.options].some((option) => option.value === current) ? current : String(state.user?.id || "");
+  control.dataset.productId = String(productID);
 }
 
 function updateTicketCreateStep(step, { enabled, active, complete }) {
@@ -1382,7 +1420,7 @@ function comments(ticket) {
 }
 
 function conversationMessages(ticket) {
-  const opener = ticket.requester_name || ticket.requester_email || "Deleted account";
+  const opener = ticket.created_by_name || "Unknown";
   const messages = [{
     author: opener,
     avatar: initials(opener),
@@ -1449,7 +1487,7 @@ function initials(value) {
 
 function isCurrentUserMessage(ticket, entry) {
   const userID = Number(state.user?.id || 0);
-  return userID > 0 && userID === Number(entry.opening ? ticket.requester_user_id : entry.author_user_id);
+  return userID > 0 && userID === Number(entry.opening ? ticket.created_by_user_id : entry.author_user_id);
 }
 
 function commentComposer(ticket) {

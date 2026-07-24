@@ -427,12 +427,17 @@ func multipartCreateTicketInput(r *http.Request, fallbackProductID int64) (store
 	if err != nil {
 		return store.CreateTicket{}, err
 	}
+	requesterUserID, err := multipartOptionalID(r, "requester_user_id")
+	if err != nil {
+		return store.CreateTicket{}, err
+	}
 	return store.CreateTicket{
-		ProductID:      productID,
-		Title:          multipartValue(r, "title"),
-		Description:    multipartValue(r, "description"),
-		Priority:       multipartValue(r, "priority"),
-		AssigneeUserID: assigneeUserID,
+		ProductID:       productID,
+		Title:           multipartValue(r, "title"),
+		Description:     multipartValue(r, "description"),
+		Priority:        multipartValue(r, "priority"),
+		AssigneeUserID:  assigneeUserID,
+		RequesterUserID: requesterUserID,
 	}, nil
 }
 

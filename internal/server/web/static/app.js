@@ -334,6 +334,7 @@ async function loadProducts() {
   const payload = await request("/api/products");
   state.products = payload.products || [];
   state.assignees = payload.assignees || [];
+  state.requesters = payload.requesters || [];
   if (state.ticketProductId && !state.products.some((product) => product.id === state.ticketProductId)) {
     state.ticketProductId = null;
   }

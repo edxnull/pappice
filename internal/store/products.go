@@ -13,6 +13,10 @@ const productAssigneeEligibilitySQL = `pm.role IN ('manager', 'staff')
 	AND u.role IN ('admin', 'staff')
 	AND u.disabled = 0`
 
+const productRequesterEligibilitySQL = `pm.role = 'customer'
+	AND u.role = 'customer'
+	AND u.disabled = 0`
+
 func (s *Store) CreateProduct(input CreateProduct) (Product, error) {
 	now := time.Now().UTC()
 	tx, err := s.db.Begin()
@@ -172,13 +176,22 @@ func (s *Store) ListProductMembers(productID int64) ([]ProductMember, error) {
 	return scanProductMembers(rows)
 }
 
-func (s *Store) ListProductAssignees(user User) ([]ProductAssignee, error) {
-	if normalizeGlobalRole(user.Role) == "customer" {
+func (s *Store) ListProductAssignees(user User) ([]ProductAccount, error) {
+	return s.listProductAccounts(user, productAssigneeEligibilitySQL)
+}
+
+func (s *Store) ListProductRequesters(user User) ([]ProductAccount, error) {
+	return s.listProductAccounts(user, productRequesterEligibilitySQL)
+}
+
+func (s *Store) listProductAccounts(user User, eligibility string) ([]ProductAccount, error) {
+	role := normalizeGlobalRole(user.Role)
+	if role == "customer" {
 		return nil, nil
 	}
-	conditions := []string{productAssigneeEligibilitySQL}
+	conditions := []string{eligibility}
 	args := []any{}
-	if normalizeGlobalRole(user.Role) != "admin" {
+	if role != "admin" {
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM product_members access
 			WHERE access.product_id = pm.product_id
@@ -197,15 +210,15 @@ func (s *Store) ListProductAssignees(user User) ([]ProductAssignee, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var assignees []ProductAssignee
+	var accounts []ProductAccount
 	for rows.Next() {
-		var assignee ProductAssignee
-		if err := rows.Scan(&assignee.ProductID, &assignee.UserID, &assignee.Email, &assignee.DisplayName); err != nil {
+		var account ProductAccount
+		if err := rows.Scan(&account.ProductID, &account.UserID, &account.Email, &account.DisplayName); err != nil {
 			return nil, err
 		}
-		assignees = append(assignees, assignee)
+		accounts = append(accounts, account)
 	}
-	return assignees, rows.Err()
+	return accounts, rows.Err()
 }
 
 func scanProductMembers(rows *sql.Rows) ([]ProductMember, error) {

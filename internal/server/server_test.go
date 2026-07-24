@@ -1766,7 +1766,6 @@ func TestRegisteredCustomerTicketFlow(t *testing.T) {
 		EmailNotifications: true,
 		PublicURL:          "https://tracker.example.test",
 	})
-	_ = tracker
 	adminCookie, adminCSRF := setupAdmin(t, client, server.URL, "admin", "admin@example.test")
 
 	resp, body := doJSON(t, client, http.MethodGet, server.URL+"/api/support/products", nil, nil, "", "")
@@ -1807,6 +1806,9 @@ func TestRegisteredCustomerTicketFlow(t *testing.T) {
 
 	resp, body = doJSON(t, client, http.MethodGet, server.URL+"/api/products", nil, customerCookie, "", "")
 	requireStatus(t, resp, body, http.StatusOK)
+	if bytes.Contains(body, []byte("intruder@example.test")) {
+		t.Fatalf("customer product list leaked requester candidates: %s", body)
+	}
 	productID = decodeFirstProductID(t, body)
 
 	resp, body = doJSON(t, client, http.MethodPost, server.URL+"/api/tickets", map[string]any{
@@ -1826,15 +1828,18 @@ func TestRegisteredCustomerTicketFlow(t *testing.T) {
 		ID              int64  `json:"id"`
 		Key             string `json:"key"`
 		Title           string `json:"title"`
-		Source          string `json:"source"`
 		RequesterUserID int64  `json:"requester_user_id"`
 		RequesterEmail  string `json:"requester_email"`
+		CreatedByUserID int64  `json:"created_by_user_id"`
 	}
 	if err := json.Unmarshal(body, &created); err != nil {
 		t.Fatalf("decode created ticket: %v", err)
 	}
-	if created.ID == 0 || created.Key == "" || created.Source != "portal" || created.RequesterUserID != customerID || created.RequesterEmail != "customer@example.test" {
+	if created.ID == 0 || created.Key == "" || created.RequesterUserID != customerID || created.CreatedByUserID != customerID || created.RequesterEmail != "customer@example.test" {
 		t.Fatalf("created ticket = %#v", created)
+	}
+	if notification := requireNotificationForTicketEmail(t, tracker, created.ID, "customer@example.test"); notification.Event != "ticket.created" {
+		t.Fatalf("requester notification = %#v", notification)
 	}
 
 	resp, body = doJSON(t, client, http.MethodGet, server.URL+"/api/tickets/"+itoa(created.ID), nil, nil, "", "")
@@ -1991,6 +1996,114 @@ func TestRegisteredCustomerTicketFlow(t *testing.T) {
 	}
 }
 
+func TestStaffCreatesTicketForCustomer(t *testing.T) {
+	tracker, server, client := newTestServer(t, Options{
+		EmailNotifications: true,
+		PublicURL:          "https://tracker.example.test",
+		UploadDir:          t.TempDir(),
+	})
+	adminCookie, adminCSRF := setupAdmin(t, client, server.URL, "admin", "admin@example.test")
+	resp, body := doJSON(t, client, http.MethodGet, server.URL+"/api/products", nil, adminCookie, "", "")
+	requireStatus(t, resp, body, http.StatusOK)
+	productID := decodeFirstProductID(t, body)
+
+	staffID := createUser(t, client, server.URL, adminCookie, adminCSRF, map[string]any{
+		"display_name": "Support",
+		"email":        "staff@example.test",
+		"password":     "correct horse",
+		"role":         "staff",
+	})
+	customerID := createUser(t, client, server.URL, adminCookie, adminCSRF, map[string]any{
+		"display_name": "Customer",
+		"email":        "customer@example.test",
+		"password":     "correct horse",
+		"role":         "customer",
+	})
+	otherCustomerID := createUser(t, client, server.URL, adminCookie, adminCSRF, map[string]any{
+		"email":    "other@example.test",
+		"password": "correct horse",
+		"role":     "customer",
+	})
+	outsideCustomerID := createUser(t, client, server.URL, adminCookie, adminCSRF, map[string]any{
+		"email":    "outside@example.test",
+		"password": "correct horse",
+		"role":     "customer",
+	})
+	addProductMember(t, client, server.URL, adminCookie, adminCSRF, productID, staffID, "staff")
+	addProductMember(t, client, server.URL, adminCookie, adminCSRF, productID, customerID, "customer")
+	addProductMember(t, client, server.URL, adminCookie, adminCSRF, productID, otherCustomerID, "customer")
+	staffCookie, staffCSRF := loginUser(t, client, server.URL, "staff", "correct horse")
+
+	resp, body = doJSON(t, client, http.MethodGet, server.URL+"/api/products", nil, staffCookie, "", "")
+	requireStatus(t, resp, body, http.StatusOK)
+	var products struct {
+		Requesters []store.ProductAccount `json:"requesters"`
+	}
+	if err := json.Unmarshal(body, &products); err != nil {
+		t.Fatalf("decode product requesters: %v", err)
+	}
+	if len(products.Requesters) != 2 || products.Requesters[0].UserID != customerID || products.Requesters[1].UserID != otherCustomerID {
+		t.Fatalf("product requesters = %#v", products.Requesters)
+	}
+
+	resp, body = doJSON(t, client, http.MethodPost, server.URL+"/api/tickets", map[string]any{
+		"product_id":        productID,
+		"title":             "Opened by support",
+		"description":       "Customer called support",
+		"assignee_user_id":  staffID,
+		"requester_user_id": customerID,
+	}, staffCookie, staffCSRF, server.URL)
+	requireStatus(t, resp, body, http.StatusCreated)
+	var created store.Ticket
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode staff-created ticket: %v", err)
+	}
+	if created.RequesterUserID != customerID || created.CreatedByUserID != staffID || created.CreatedByName != "Support" || created.AssigneeUserID != staffID {
+		t.Fatalf("staff-created ticket = %#v", created)
+	}
+	notification := requireNotificationForTicketEmail(t, tracker, created.ID, "customer@example.test")
+	if notification.Event != "ticket.created" {
+		t.Fatalf("requester notification = %#v", notification)
+	}
+
+	customerCookie, customerCSRF := loginUser(t, client, server.URL, "customer", "correct horse")
+	resp, body = doJSON(t, client, http.MethodGet, server.URL+"/api/tickets/"+itoa(created.ID), nil, customerCookie, "", "")
+	requireStatus(t, resp, body, http.StatusOK)
+	var customerTicket store.Ticket
+	if err := json.Unmarshal(body, &customerTicket); err != nil {
+		t.Fatalf("decode customer ticket: %v", err)
+	}
+	if customerTicket.Title != "Opened by support" || customerTicket.CreatedByUserID != staffID || customerTicket.CreatedByName != "Support" || !customerTicket.HasUnread {
+		t.Fatalf("customer cannot see staff-created ticket: %s", body)
+	}
+	resp, body = doJSON(t, client, http.MethodPost, server.URL+"/api/tickets", map[string]any{
+		"product_id":        productID,
+		"title":             "Forged requester",
+		"requester_user_id": otherCustomerID,
+	}, customerCookie, customerCSRF, server.URL)
+	requireStatus(t, resp, body, http.StatusBadRequest)
+
+	resp, body = doMultipart(t, client, http.MethodPost, server.URL+"/api/tickets", map[string]string{
+		"product_id":        itoa(productID),
+		"title":             "Multipart customer ticket",
+		"requester_user_id": itoa(customerID),
+	}, []testUpload{{Filename: "context.txt", Body: "customer context"}}, staffCookie, staffCSRF, server.URL)
+	requireStatus(t, resp, body, http.StatusCreated)
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode multipart ticket: %v", err)
+	}
+	if created.RequesterUserID != customerID || len(created.Attachments) != 1 || created.Attachments[0].CreatedByUserID != staffID {
+		t.Fatalf("multipart staff-created ticket = %#v", created)
+	}
+
+	resp, body = doJSON(t, client, http.MethodPost, server.URL+"/api/tickets", map[string]any{
+		"product_id":        productID,
+		"title":             "Customer outside product",
+		"requester_user_id": outsideCustomerID,
+	}, staffCookie, staffCSRF, server.URL)
+	requireStatus(t, resp, body, http.StatusBadRequest)
+}
+
 func TestCustomerPermissionBoundaries(t *testing.T) {
 	_, server, client := newTestServer(t)
 	adminCookie, adminCSRF := setupAdmin(t, client, server.URL, "admin", "admin@example.test")
@@ -2034,7 +2147,7 @@ func TestCustomerPermissionBoundaries(t *testing.T) {
 	if err := json.Unmarshal(body, &created); err != nil {
 		t.Fatalf("decode customer ticket: %v", err)
 	}
-	if created.Priority != "urgent" || created.AssigneeUserID != 0 || created.AssigneeEmail != "" || created.RequesterUserID != customerID || created.Source != "portal" {
+	if created.Priority != "urgent" || created.AssigneeUserID != 0 || created.AssigneeEmail != "" || created.RequesterUserID != customerID || created.CreatedByUserID != customerID {
 		t.Fatalf("customer-controlled fields were not normalized: %#v", created)
 	}
 

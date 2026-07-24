@@ -37,10 +37,11 @@ type Ticket struct {
 	Priority        string       `json:"priority"`
 	AssigneeUserID  int64        `json:"assignee_user_id,omitempty"`
 	AssigneeEmail   string       `json:"assignee_email,omitempty"`
-	RequesterUserID int64        `json:"requester_user_id,omitempty"`
-	Source          string       `json:"source"`
+	RequesterUserID int64        `json:"requester_user_id"`
 	RequesterName   string       `json:"requester_name,omitempty"`
 	RequesterEmail  string       `json:"requester_email,omitempty"`
+	CreatedByUserID int64        `json:"created_by_user_id"`
+	CreatedByName   string       `json:"created_by_name,omitempty"`
 	Attachments     []Attachment `json:"attachments,omitempty"`
 	Comments        []Comment    `json:"comments"`
 	UnreadCount     int          `json:"unread_count"`
@@ -63,7 +64,7 @@ type TicketSummary struct {
 	Priority        string     `json:"priority"`
 	AssigneeUserID  int64      `json:"assignee_user_id,omitempty"`
 	AssigneeEmail   string     `json:"assignee_email,omitempty"`
-	RequesterUserID int64      `json:"requester_user_id,omitempty"`
+	RequesterUserID int64      `json:"requester_user_id"`
 	RequesterName   string     `json:"requester_name,omitempty"`
 	RequesterEmail  string     `json:"requester_email,omitempty"`
 	ProductRole     string     `json:"-"`
@@ -110,12 +111,13 @@ type Comment struct {
 }
 
 type CreateTicket struct {
-	ProductID      int64  `json:"product_id"`
-	Title          string `json:"title"`
-	Description    string `json:"description"`
-	Priority       string `json:"priority"`
-	AssigneeUserID int64  `json:"assignee_user_id"`
-	ActorUserID    int64  `json:"-"`
+	ProductID       int64  `json:"product_id"`
+	Title           string `json:"title"`
+	Description     string `json:"description"`
+	Priority        string `json:"priority"`
+	AssigneeUserID  int64  `json:"assignee_user_id"`
+	RequesterUserID int64  `json:"requester_user_id"`
+	ActorUserID     int64  `json:"-"`
 }
 
 type UpdateTicket struct {
@@ -335,7 +337,7 @@ type ProductMember struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-type ProductAssignee struct {
+type ProductAccount struct {
 	ProductID   int64  `json:"product_id"`
 	UserID      int64  `json:"user_id"`
 	Email       string `json:"email"`
@@ -925,8 +927,8 @@ CREATE TABLE IF NOT EXISTS tickets (
 	status TEXT NOT NULL,
 	priority TEXT NOT NULL,
 	assignee_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-	requester_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-	source TEXT NOT NULL DEFAULT 'staff',
+	requester_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+	created_by_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL,
 	closed_at TEXT,

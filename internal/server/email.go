@@ -42,7 +42,7 @@ func (s *Server) ticketEmailNotifications(event string, ticket store.Ticket, act
 }
 
 func (s *Server) requesterEmailNotifications(event string, ticket store.Ticket, actorName string, sendAfter time.Time) []store.CreateEmailNotification {
-	if !s.options.EmailNotifications || ticket.Source != "portal" || ticket.RequesterUserID == 0 || strings.TrimSpace(ticket.RequesterEmail) == "" {
+	if !s.options.EmailNotifications || ticket.RequesterUserID == 0 || strings.TrimSpace(ticket.RequesterEmail) == "" {
 		return nil
 	}
 	sendAfter = normalizeNotificationSendAfter(sendAfter)

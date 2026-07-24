@@ -497,8 +497,73 @@ async function staffReplyAndResolve(cdp) {
   });
 }
 
+async function createTicketForCustomer(cdp) {
+  await runInPage(cdp, async (input) => {
+    const { modalRoot, openModalRoot, setValue, waitFor } = pageTools();
+    const newTicket = await waitFor(() => {
+      const candidate = document.querySelector("#newTicketButton");
+      return candidate && !candidate.hidden ? candidate : null;
+    }, "new ticket action after product load");
+    newTicket.click();
+    const root = await waitFor(() => {
+      const candidate = modalRoot();
+      return candidate?.querySelector("dialog[open] h2")?.textContent.includes("New Ticket") ? candidate : null;
+    }, "staff ticket creation modal");
+    const product = root.querySelector("[name='product_id']");
+    setValue(product, [...product.options].find((option) => option.value)?.value);
+    const customerOption = await waitFor(() => {
+      const candidate = root.querySelector("[name='requester_user_id']");
+      if (!candidate || candidate.disabled) return null;
+      if (!candidate.selectedOptions[0]?.textContent.includes("(myself)")) {
+        throw new Error("staff should be the default requester");
+      }
+      return [...candidate.options].find((option) => option.textContent.includes(input.customerEmail)) || null;
+    }, "product customer requester option");
+    setValue(root.querySelector("[name='requester_user_id']"), customerOption.value);
+    const priority = await waitFor(() => {
+      const candidate = root.querySelector("[name='priority']");
+      return candidate && !candidate.disabled ? candidate : null;
+    }, "staff ticket priority step enabled");
+    setValue(priority, "normal");
+    await waitFor(() => !root.querySelector("[name='title']").disabled, "staff ticket detail step enabled");
+    setValue(root.querySelector("[name='title']"), input.title);
+    setValue(root.querySelector("[name='description']"), input.description);
+    const create = root.querySelector("footer .primary");
+    await waitFor(() => !create.disabled, "staff ticket create action enabled");
+    create.click();
+    const confirmation = await waitFor(() => openModalRoot("Create this ticket?"), "staff ticket confirmation");
+    if (!confirmation.textContent.includes("Requester") || !confirmation.textContent.includes(input.customerEmail)) {
+      throw new Error("ticket confirmation should identify the selected requester");
+    }
+    confirmation.querySelector("footer .primary").click();
+    await waitFor(() => !modalRoot()?.querySelector("dialog[open]"), "staff ticket creation closed", 12000);
+    const detail = await waitFor(() => {
+      const pane = document.querySelector("#ticketDetailPane");
+      return pane?.textContent.includes(input.title) && pane.textContent.includes(input.customerEmail) ? pane : null;
+    }, "staff-created customer ticket detail", 12000);
+    if (!detail.textContent.includes(input.customerDisplayName)) {
+      throw new Error("staff-created ticket should show the selected customer as requester");
+    }
+    const opening = detail.querySelector(".opening-message")?.closest(".message-row");
+    const author = opening?.querySelector(".message-head-main strong")?.textContent?.trim();
+    if (!opening?.classList.contains("from-current") || author !== input.adminDisplayName) {
+      throw new Error("staff-created ticket should attribute the opening message to its creator");
+    }
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await waitFor(() => !document.querySelector("#ticketList .ticket-row.active"), "staff-created ticket closed");
+    return true;
+  }, {
+    adminDisplayName: admin.displayName,
+    customerDisplayName: customer.displayName,
+    customerEmail: customer.email,
+    description: "The customer reported a billing question by phone.",
+    title: `Staff-created ${ticket.title}`
+  });
+}
+
 export {
   createCustomerTicket,
+  createTicketForCustomer,
   verifyTicketHashRoute,
   verifyFixedTicketLayout,
   verifySinglePaneTicketFlow,

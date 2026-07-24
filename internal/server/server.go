@@ -488,9 +488,15 @@ func (s *Server) handleProducts(w http.ResponseWriter, r *http.Request) {
 			respondStoreError(w, err)
 			return
 		}
+		requesters, err := s.store.ListProductRequesters(auth.User)
+		if err != nil {
+			respondStoreError(w, err)
+			return
+		}
 		respondJSON(w, http.StatusOK, map[string]any{
-			"products":  products,
-			"assignees": assignees,
+			"products":   products,
+			"assignees":  assignees,
+			"requesters": requesters,
 		})
 	case http.MethodPost:
 		if !isAdmin(auth.User) {

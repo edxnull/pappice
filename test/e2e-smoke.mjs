@@ -16,6 +16,7 @@ import {
 } from "./e2e/products.mjs";
 import {
   createCustomerTicket,
+  createTicketForCustomer,
   staffReplyAndResolve,
   verifyFixedTicketLayout,
   verifySinglePaneTicketFlow,
@@ -68,6 +69,7 @@ async function main() {
   }, "mobile ticket");
   await logout(page);
   await loginAsAdmin(page);
+  await createTicketForCustomer(page);
   await staffReplyAndResolve(page);
   await verifyEmailOutbox(page);
   await verifyAuditLog(page);

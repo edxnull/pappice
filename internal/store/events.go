@@ -50,7 +50,6 @@ type CreateDomainEvent struct {
 }
 
 type TicketEventPayload struct {
-	Source            string `json:"source,omitempty"`
 	HasPatch          bool   `json:"has_patch,omitempty"`
 	PublicComment     bool   `json:"public_comment,omitempty"`
 	AssignmentChanged bool   `json:"assignment_changed,omitempty"`
