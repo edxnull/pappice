@@ -1684,6 +1684,73 @@ func TestStoreAdminProductWebhookAndFailureLifecycle(t *testing.T) {
 	}
 }
 
+func TestDeleteUserPreservesTicketHistory(t *testing.T) {
+	tracker, err := Open(filepath.Join(t.TempDir(), "tracker.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	admin, err := tracker.CreateFirstAdmin(CreateUser{Email: "admin@example.test", Password: "correct horse"})
+	if err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+	productID := mustListProducts(t, tracker, admin)[0].ID
+	staff, err := tracker.CreateUser(CreateUser{Email: "staff@example.test", Password: "correct horse", Role: "staff"})
+	if err != nil {
+		t.Fatalf("create staff: %v", err)
+	}
+	customer, err := tracker.CreateUser(CreateUser{Email: "customer@example.test", Password: "correct horse", Role: "customer"})
+	if err != nil {
+		t.Fatalf("create customer: %v", err)
+	}
+	unused, err := tracker.CreateUser(CreateUser{Email: "unused@example.test", Password: "correct horse", Role: "customer"})
+	if err != nil {
+		t.Fatalf("create unused account: %v", err)
+	}
+	for _, member := range []UpsertProductMember{
+		{UserID: staff.ID, Role: "staff"},
+		{UserID: customer.ID, Role: "customer"},
+	} {
+		if _, err := tracker.UpsertProductMember(productID, member); err != nil {
+			t.Fatalf("add %s member: %v", member.Role, err)
+		}
+	}
+	ticket, err := tracker.CreateTicketWithAttachments(CreateTicket{
+		ProductID:      productID,
+		Title:          "Preserved history",
+		AssigneeUserID: staff.ID,
+		ActorUserID:    customer.ID,
+	}, []CreateAttachment{{Filename: "context.txt", ContentType: "text/plain", StorageKey: "context.txt"}})
+	if err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+	if _, err := tracker.SaveTicket(SaveTicketInput{
+		TicketID:    ticket.ID,
+		ActorUserID: staff.ID,
+		Comment:     &AddComment{Body: "Investigating", Visibility: "public"},
+	}); err != nil {
+		t.Fatalf("add staff comment: %v", err)
+	}
+
+	disabled := true
+	if _, err := tracker.UpdateUser(customer.ID, UpdateUser{Disabled: &disabled}); err != nil {
+		t.Fatalf("disable customer: %v", err)
+	}
+	for _, userID := range []int64{customer.ID, staff.ID} {
+		if err := tracker.DeleteUser(userID, EventContext{}); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "disable it instead") {
+			t.Fatalf("delete historical user %d error = %v, want conflict", userID, err)
+		}
+		if _, err := tracker.GetUser(userID); err != nil {
+			t.Fatalf("historical user %d was removed: %v", userID, err)
+		}
+	}
+	if err := tracker.DeleteUser(unused.ID, EventContext{}); err != nil {
+		t.Fatalf("delete unused account: %v", err)
+	}
+	if _, err := tracker.GetUser(unused.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted unused account error = %v, want not found", err)
+	}
+}
+
 func TestProductMembershipFiltersTickets(t *testing.T) {
 	tracker, err := Open(filepath.Join(t.TempDir(), "tracker.db"))
 	if err != nil {
@@ -1850,12 +1917,16 @@ func TestEmailRecipientsAndOutbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("enqueue first coalesced email: %v", err)
 	}
+	renamedEmail, renamedName := "renamed@example.test", "Renamed Assignee"
+	if _, err := tracker.UpdateUser(assignee.ID, UpdateUser{Email: &renamedEmail, DisplayName: &renamedName}); err != nil {
+		t.Fatalf("rename assignee: %v", err)
+	}
 	second, err := tracker.EnqueueEmailNotifications([]CreateEmailNotification{{
 		ProductID:      ticket.ProductID,
 		TicketID:       ticket.ID,
 		UserID:         assignee.ID,
-		RecipientEmail: "renamed@example.test",
-		RecipientName:  "Renamed Assignee",
+		RecipientEmail: "stale@example.test",
+		RecipientName:  "Stale Assignee",
 		Event:          "ticket.commented",
 		Subject:        "[PME-1] Ticket update",
 		BodyText:       "second update",
@@ -1885,6 +1956,16 @@ func TestEmailRecipientsAndOutbox(t *testing.T) {
 	}
 	if _, err := tracker.GetEmailNotification(second[0].ID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("disabled user pending notification error = %v, want ErrNotFound", err)
+	}
+	queued, err = tracker.EnqueueEmailNotifications([]CreateEmailNotification{{
+		UserID:         assignee.ID,
+		RecipientEmail: assignee.Email,
+		Event:          "ticket.updated",
+		Subject:        "Ignored",
+		BodyText:       "Disabled account",
+	}})
+	if err != nil || len(queued) != 0 {
+		t.Fatalf("disabled user queued notifications = %#v err=%v", queued, err)
 	}
 }
 

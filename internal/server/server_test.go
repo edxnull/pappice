@@ -2065,6 +2065,11 @@ func TestStaffCreatesTicketForCustomer(t *testing.T) {
 	if notification.Event != "ticket.created" {
 		t.Fatalf("requester notification = %#v", notification)
 	}
+	resp, body = doJSON(t, client, http.MethodDelete, server.URL+"/api/users/"+itoa(customerID), nil, adminCookie, adminCSRF, server.URL)
+	requireStatus(t, resp, body, http.StatusConflict)
+	if !bytes.Contains(body, []byte("disable it instead")) {
+		t.Fatalf("historical account deletion response = %s", body)
+	}
 
 	customerCookie, customerCSRF := loginUser(t, client, server.URL, "customer", "correct horse")
 	resp, body = doJSON(t, client, http.MethodGet, server.URL+"/api/tickets/"+itoa(created.ID), nil, customerCookie, "", "")
@@ -2644,6 +2649,20 @@ func TestRequesterNotificationPolicy(t *testing.T) {
 		!strings.Contains(notification.BodyText, "Visible staff reply") ||
 		strings.Contains(notification.BodyText, "Current status: Assigned") {
 		t.Fatalf("public reply should be the requester-facing event: %#v", notification)
+	}
+
+	resp, body = doJSON(t, client, http.MethodPatch, server.URL+"/api/users/"+itoa(customerID), map[string]any{
+		"disabled": true,
+	}, adminCookie, adminCSRF, server.URL)
+	requireStatus(t, resp, body, http.StatusOK)
+	resp, body = doJSON(t, client, http.MethodPatch, server.URL+"/api/tickets/"+itoa(publicReplyID), map[string]any{
+		"status": "resolved",
+	}, adminCookie, adminCSRF, server.URL)
+	requireStatus(t, resp, body, http.StatusOK)
+	for _, notification := range mustEmailNotifications(t, tracker, 100) {
+		if notification.TicketID == publicReplyID && notification.UserID == customerID {
+			t.Fatalf("disabled requester notification = %#v", notification)
+		}
 	}
 }
 

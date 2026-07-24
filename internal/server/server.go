@@ -1448,7 +1448,6 @@ func (s *Server) handleEmailNotificationTest(w http.ResponseWriter, r *http.Requ
 	bodyText := "This is a no-reply test email from Pappice.\n\nIf you received this message, SMTP delivery is working."
 	bodyHTML := "<!doctype html><meta charset=\"utf-8\"><p>This is a no-reply test email from Pappice.</p><p>If you received this message, SMTP delivery is working.</p>"
 	created, err := s.store.EnqueueEmailNotificationsWithEvent([]store.CreateEmailNotification{{
-		UserID:         auth.User.ID,
 		RecipientEmail: recipientEmail,
 		RecipientName:  recipientName,
 		Event:          "email.test",

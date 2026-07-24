@@ -532,7 +532,7 @@ function accountEditContent(user) {
   }));
   remove.addEventListener("click", () => showInlineConfirm(confirmArea, {
     title: "Delete this account?",
-    body: `This permanently removes ${accountName(user)}. This cannot be undone.`,
+    body: `This permanently removes ${accountName(user)} if it has no ticket history. Otherwise, disable the account instead.`,
     confirmLabel: "Delete account",
     danger: true,
     onConfirm: async () => {

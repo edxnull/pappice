@@ -111,7 +111,20 @@ func (s *Store) EnqueueEmailNotificationsWithEvent(inputs []CreateEmailNotificat
 func enqueueEmailNotificationsTx(tx *sql.Tx, inputs []CreateEmailNotification, now time.Time) ([]EmailNotification, error) {
 	created := make([]EmailNotification, 0, len(inputs))
 	for _, input := range inputs {
-		email, err := normalizeEmail(input.RecipientEmail)
+		recipientEmail := input.RecipientEmail
+		recipientName := input.RecipientName
+		if input.UserID > 0 {
+			recipient, active, err := activeEmailRecipientTx(tx, input.UserID)
+			if err != nil {
+				return nil, err
+			}
+			if !active {
+				continue
+			}
+			recipientEmail = recipient.Email
+			recipientName = recipient.DisplayName
+		}
+		email, err := normalizeEmail(recipientEmail)
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +138,7 @@ func enqueueEmailNotificationsTx(tx *sql.Tx, inputs []CreateEmailNotification, n
 			TicketID:       input.TicketID,
 			UserID:         input.UserID,
 			RecipientEmail: email,
-			RecipientName:  strings.TrimSpace(input.RecipientName),
+			RecipientName:  strings.TrimSpace(recipientName),
 			Event:          strings.TrimSpace(input.Event),
 			Subject:        subject,
 			BodyText:       bodyText,
@@ -194,6 +207,20 @@ func enqueueEmailNotificationsTx(tx *sql.Tx, inputs []CreateEmailNotification, n
 		created = append(created, notification)
 	}
 	return created, nil
+}
+
+func activeEmailRecipientTx(tx *sql.Tx, userID int64) (EmailRecipient, bool, error) {
+	recipient, err := scanEmailRecipient(tx.QueryRow(`
+		SELECT id, display_name, email, role
+		FROM users
+		WHERE id = ? AND disabled = 0`, userID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return EmailRecipient{}, false, nil
+	}
+	if err != nil {
+		return EmailRecipient{}, false, err
+	}
+	return recipient, true, nil
 }
 
 func (s *Store) ClaimEmailNotifications(limit int, leaseFor time.Duration) ([]EmailNotification, error) {

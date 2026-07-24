@@ -212,6 +212,13 @@ func (s *Store) DeleteUser(id int64, event EventContext) error {
 	if err != nil {
 		return err
 	}
+	hasActivity, err := userHasTicketActivityTx(tx, id)
+	if err != nil {
+		return err
+	}
+	if hasActivity {
+		return fmt.Errorf("%w: account has ticket history; disable it instead", ErrConflict)
+	}
 	if err := cancelPendingUserEmailsTx(tx, id); err != nil {
 		return err
 	}
@@ -227,6 +234,22 @@ func (s *Store) DeleteUser(id int64, event EventContext) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func userHasTicketActivityTx(tx *sql.Tx, userID int64) (bool, error) {
+	var exists bool
+	err := tx.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM tickets
+			WHERE requester_user_id = ? OR created_by_user_id = ? OR assignee_user_id = ?
+			UNION ALL
+			SELECT 1 FROM comments WHERE author_user_id = ?
+			UNION ALL
+			SELECT 1 FROM attachments WHERE created_by_user_id = ?
+		)`,
+		userID, userID, userID, userID, userID,
+	).Scan(&exists)
+	return exists, err
 }
 
 func (s *Store) Authenticate(email, password string) (User, error) {
