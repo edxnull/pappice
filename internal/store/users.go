@@ -245,9 +245,11 @@ func userHasTicketActivityTx(tx *sql.Tx, userID int64) (bool, error) {
 			UNION ALL
 			SELECT 1 FROM comments WHERE author_user_id = ?
 			UNION ALL
+			SELECT 1 FROM ticket_status_changes WHERE actor_user_id = ?
+			UNION ALL
 			SELECT 1 FROM attachments WHERE created_by_user_id = ?
 		)`,
-		userID, userID, userID, userID, userID,
+		userID, userID, userID, userID, userID, userID,
 	).Scan(&exists)
 	return exists, err
 }

@@ -1329,6 +1329,33 @@ button:focus-visible {
   padding: 5px 9px;
 }
 
+.conversation-status-change {
+  align-items: center;
+  color: var(--muted);
+  display: grid;
+  font-size: 12px;
+  gap: 10px;
+  grid-template-columns: 1fr auto 1fr;
+  margin: 0 4px;
+  text-align: center;
+}
+
+.conversation-status-change::before,
+.conversation-status-change::after {
+  background: var(--border-soft);
+  content: "";
+  height: 1px;
+}
+
+.conversation-status-change strong {
+  color: var(--text);
+}
+
+.conversation-status-change span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .message-avatar {
   align-items: center;
   background: #dbe5ee;

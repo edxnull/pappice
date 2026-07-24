@@ -44,6 +44,7 @@ var orderedMigrations = []migration{
 	{Version: 2, Name: "rename_product_roles", Up: migrateRenameProductRoles},
 	{Version: 3, Name: "normalize_relational_data", Up: migrateRelationalData},
 	{Version: 4, Name: "require_ticket_participants", Up: migrateTicketParticipants},
+	{Version: 5, Name: "ticket_status_history", Up: migrateTicketStatusHistory},
 }
 
 func CurrentSchemaVersion() int {
@@ -470,6 +471,22 @@ func migrateTicketParticipants(tx *sql.Tx) error {
 		FROM tickets;
 		DROP TABLE tickets;
 		ALTER TABLE tickets_with_participants RENAME TO tickets;
+	`)
+	return err
+}
+
+func migrateTicketStatusHistory(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS ticket_status_changes (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+			actor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+			previous_status TEXT NOT NULL,
+			current_status TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_ticket_status_changes_ticket
+			ON ticket_status_changes(ticket_id, created_at, id);
 	`)
 	return err
 }

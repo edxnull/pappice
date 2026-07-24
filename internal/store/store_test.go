@@ -101,6 +101,22 @@ func TestStoreCreateUpdateCommentAndReload(t *testing.T) {
 	if updated := updatedResult.Ticket; updated.Status != "assigned" || updated.AssigneeUserID != admin.ID || updated.AssigneeEmail != admin.Email {
 		t.Fatalf("updated ticket = %#v", updated)
 	}
+	if got := updatedResult.Ticket.StatusChanges; len(got) != 1 ||
+		got[0].ActorUserID != admin.ID || got[0].ActorName != "Alice Admin" ||
+		got[0].PreviousStatus != "new" || got[0].CurrentStatus != "assigned" {
+		t.Fatalf("status changes = %#v", got)
+	}
+	sameStatus, err := tracker.SaveTicket(SaveTicketInput{
+		TicketID:    ticket.ID,
+		Patch:       UpdateTicket{Status: &status},
+		ActorUserID: admin.ID,
+	})
+	if err != nil {
+		t.Fatalf("save unchanged status: %v", err)
+	}
+	if len(sameStatus.Ticket.StatusChanges) != 1 {
+		t.Fatalf("unchanged status changes = %#v, want one", sameStatus.Ticket.StatusChanges)
+	}
 	summary, err = tracker.TicketSummaryForUser(admin, ticket.ID)
 	if err != nil || summary.LastReadAt == nil || !summary.LastReadAt.After(readAt) {
 		t.Fatalf("read time after save = %v err=%v, want after %v", summary.LastReadAt, err, readAt)
@@ -151,8 +167,9 @@ func TestStoreCreateUpdateCommentAndReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get reloaded ticket: %v", err)
 	}
-	if len(reloadedTicket.Comments) != 1 || reloadedTicket.Comments[0].Author != "Alice Admin" {
-		t.Fatalf("reloaded comment authors = %#v, want display names", reloadedTicket.Comments)
+	if len(reloadedTicket.Comments) != 1 || reloadedTicket.Comments[0].Author != "Alice Admin" ||
+		len(reloadedTicket.StatusChanges) != 1 || reloadedTicket.StatusChanges[0].ActorName != "Alice Admin" {
+		t.Fatalf("reloaded ticket history = %#v", reloadedTicket)
 	}
 }
 
@@ -289,7 +306,7 @@ func TestBaselineMigrationRejectsUnsupportedUsernameSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect migration: %v", err)
 	}
-	if status.CurrentVersion != 0 || len(status.Pending) != 4 || status.Pending[0].Name != "baseline_schema" || status.Pending[1].Name != "rename_product_roles" || status.Pending[2].Name != "normalize_relational_data" || status.Pending[3].Name != "require_ticket_participants" {
+	if status.CurrentVersion != 0 || len(status.Pending) != 5 || status.Pending[0].Name != "baseline_schema" || status.Pending[1].Name != "rename_product_roles" || status.Pending[2].Name != "normalize_relational_data" || status.Pending[3].Name != "require_ticket_participants" || status.Pending[4].Name != "ticket_status_history" {
 		t.Fatalf("migration status = %#v", status)
 	}
 	if _, err := Migrate(path, MigrationOptions{DryRun: true}); !errors.Is(err, ErrMigrationRequired) {
@@ -371,14 +388,14 @@ func TestMigrateRenamesProductRoles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect before migration: %v", err)
 	}
-	if status.CurrentVersion != 1 || len(status.Pending) != 3 || status.Pending[0].Name != "rename_product_roles" || status.Pending[1].Name != "normalize_relational_data" || status.Pending[2].Name != "require_ticket_participants" {
+	if status.CurrentVersion != 1 || len(status.Pending) != 4 || status.Pending[0].Name != "rename_product_roles" || status.Pending[1].Name != "normalize_relational_data" || status.Pending[2].Name != "require_ticket_participants" || status.Pending[3].Name != "ticket_status_history" {
 		t.Fatalf("before migration status = %#v", status)
 	}
 	result, err := Migrate(path, MigrationOptions{})
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if len(result.Applied) != 3 || result.Applied[0].Name != "rename_product_roles" || result.Applied[1].Name != "normalize_relational_data" || result.Applied[2].Name != "require_ticket_participants" {
+	if len(result.Applied) != 4 || result.Applied[0].Name != "rename_product_roles" || result.Applied[1].Name != "normalize_relational_data" || result.Applied[2].Name != "require_ticket_participants" || result.Applied[3].Name != "ticket_status_history" {
 		t.Fatalf("applied migrations = %#v", result.Applied)
 	}
 
@@ -481,7 +498,7 @@ func TestMigrateRelationalData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if len(result.Applied) != 2 || result.Applied[0].Name != "normalize_relational_data" || result.Applied[1].Name != "require_ticket_participants" {
+	if len(result.Applied) != 3 || result.Applied[0].Name != "normalize_relational_data" || result.Applied[1].Name != "require_ticket_participants" || result.Applied[2].Name != "ticket_status_history" {
 		t.Fatalf("applied migrations = %#v", result.Applied)
 	}
 	db, err = sql.Open("sqlite", path)
@@ -683,7 +700,7 @@ func TestSaveTicketIsTransactional(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get ticket after failed save: %v", err)
 	}
-	if unchanged.Title != "Original" || unchanged.Status != "new" || len(unchanged.Comments) != 0 {
+	if unchanged.Title != "Original" || unchanged.Status != "new" || len(unchanged.Comments) != 0 || len(unchanged.StatusChanges) != 0 {
 		t.Fatalf("failed save was not rolled back: %#v", unchanged)
 	}
 
@@ -701,7 +718,8 @@ func TestSaveTicketIsTransactional(t *testing.T) {
 	if !saved.HasPatch || !saved.HasComment || !saved.PublicComment || !saved.AssignmentChanged {
 		t.Fatalf("save metadata = %#v", saved)
 	}
-	if saved.Previous.Status != "new" || saved.Ticket.Status != "assigned" || len(saved.Ticket.Comments) != 1 {
+	if saved.Previous.Status != "new" || saved.Ticket.Status != "assigned" ||
+		len(saved.Ticket.Comments) != 1 || len(saved.Ticket.StatusChanges) != 1 {
 		t.Fatalf("saved ticket = %#v", saved)
 	}
 }
@@ -1698,6 +1716,10 @@ func TestDeleteUserPreservesTicketHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create staff: %v", err)
 	}
+	statusActor, err := tracker.CreateUser(CreateUser{Email: "status-actor@example.test", Password: "correct horse", Role: "staff"})
+	if err != nil {
+		t.Fatalf("create status actor: %v", err)
+	}
 	customer, err := tracker.CreateUser(CreateUser{Email: "customer@example.test", Password: "correct horse", Role: "customer"})
 	if err != nil {
 		t.Fatalf("create customer: %v", err)
@@ -1708,6 +1730,7 @@ func TestDeleteUserPreservesTicketHistory(t *testing.T) {
 	}
 	for _, member := range []UpsertProductMember{
 		{UserID: staff.ID, Role: "staff"},
+		{UserID: statusActor.ID, Role: "staff"},
 		{UserID: customer.ID, Role: "customer"},
 	} {
 		if _, err := tracker.UpsertProductMember(productID, member); err != nil {
@@ -1730,12 +1753,20 @@ func TestDeleteUserPreservesTicketHistory(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("add staff comment: %v", err)
 	}
+	assigned := "assigned"
+	if _, err := tracker.SaveTicket(SaveTicketInput{
+		TicketID:    ticket.ID,
+		ActorUserID: statusActor.ID,
+		Patch:       UpdateTicket{Status: &assigned},
+	}); err != nil {
+		t.Fatalf("change status: %v", err)
+	}
 
 	disabled := true
 	if _, err := tracker.UpdateUser(customer.ID, UpdateUser{Disabled: &disabled}); err != nil {
 		t.Fatalf("disable customer: %v", err)
 	}
-	for _, userID := range []int64{customer.ID, staff.ID} {
+	for _, userID := range []int64{customer.ID, staff.ID, statusActor.ID} {
 		if err := tracker.DeleteUser(userID, EventContext{}); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "disable it instead") {
 			t.Fatalf("delete historical user %d error = %v, want conflict", userID, err)
 		}

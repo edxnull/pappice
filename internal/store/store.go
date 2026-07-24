@@ -25,31 +25,32 @@ var (
 )
 
 type Ticket struct {
-	ID              int64        `json:"id"`
-	ProductID       int64        `json:"product_id"`
-	ProductKey      string       `json:"product_key"`
-	ProductName     string       `json:"product_name"`
-	Number          int64        `json:"number"`
-	Key             string       `json:"key"`
-	Title           string       `json:"title"`
-	Description     string       `json:"description"`
-	Status          string       `json:"status"`
-	Priority        string       `json:"priority"`
-	AssigneeUserID  int64        `json:"assignee_user_id,omitempty"`
-	AssigneeEmail   string       `json:"assignee_email,omitempty"`
-	RequesterUserID int64        `json:"requester_user_id"`
-	RequesterName   string       `json:"requester_name,omitempty"`
-	RequesterEmail  string       `json:"requester_email,omitempty"`
-	CreatedByUserID int64        `json:"created_by_user_id"`
-	CreatedByName   string       `json:"created_by_name,omitempty"`
-	Attachments     []Attachment `json:"attachments,omitempty"`
-	Comments        []Comment    `json:"comments"`
-	UnreadCount     int          `json:"unread_count"`
-	HasUnread       bool         `json:"has_unread"`
-	LastReadAt      *time.Time   `json:"last_read_at,omitempty"`
-	CreatedAt       time.Time    `json:"created_at"`
-	UpdatedAt       time.Time    `json:"updated_at"`
-	ClosedAt        *time.Time   `json:"closed_at,omitempty"`
+	ID              int64                `json:"id"`
+	ProductID       int64                `json:"product_id"`
+	ProductKey      string               `json:"product_key"`
+	ProductName     string               `json:"product_name"`
+	Number          int64                `json:"number"`
+	Key             string               `json:"key"`
+	Title           string               `json:"title"`
+	Description     string               `json:"description"`
+	Status          string               `json:"status"`
+	Priority        string               `json:"priority"`
+	AssigneeUserID  int64                `json:"assignee_user_id,omitempty"`
+	AssigneeEmail   string               `json:"assignee_email,omitempty"`
+	RequesterUserID int64                `json:"requester_user_id"`
+	RequesterName   string               `json:"requester_name,omitempty"`
+	RequesterEmail  string               `json:"requester_email,omitempty"`
+	CreatedByUserID int64                `json:"created_by_user_id"`
+	CreatedByName   string               `json:"created_by_name,omitempty"`
+	Attachments     []Attachment         `json:"attachments,omitempty"`
+	Comments        []Comment            `json:"comments"`
+	StatusChanges   []TicketStatusChange `json:"status_changes"`
+	UnreadCount     int                  `json:"unread_count"`
+	HasUnread       bool                 `json:"has_unread"`
+	LastReadAt      *time.Time           `json:"last_read_at,omitempty"`
+	CreatedAt       time.Time            `json:"created_at"`
+	UpdatedAt       time.Time            `json:"updated_at"`
+	ClosedAt        *time.Time           `json:"closed_at,omitempty"`
 }
 
 type TicketSummary struct {
@@ -108,6 +109,15 @@ type Comment struct {
 	Visibility   string       `json:"visibility"`
 	Attachments  []Attachment `json:"attachments,omitempty"`
 	CreatedAt    time.Time    `json:"created_at"`
+}
+
+type TicketStatusChange struct {
+	ID             int64     `json:"id"`
+	ActorUserID    int64     `json:"actor_user_id"`
+	ActorName      string    `json:"actor_name"`
+	PreviousStatus string    `json:"previous_status"`
+	CurrentStatus  string    `json:"current_status"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type CreateTicket struct {
@@ -945,6 +955,15 @@ CREATE TABLE IF NOT EXISTS comments (
 	created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ticket_status_changes (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+	actor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+	previous_status TEXT NOT NULL,
+	current_status TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ticket_reads (
 	ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
 	user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1053,6 +1072,7 @@ CREATE INDEX IF NOT EXISTS idx_tickets_requester_user ON tickets(requester_user_
 CREATE INDEX IF NOT EXISTS idx_product_members_user ON product_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_comments_ticket ON comments(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_comments_visibility ON comments(ticket_id, visibility);
+CREATE INDEX IF NOT EXISTS idx_ticket_status_changes_ticket ON ticket_status_changes(ticket_id, created_at, id);
 CREATE INDEX IF NOT EXISTS idx_ticket_reads_user ON ticket_reads(user_id, ticket_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_ticket ON attachments(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_comment ON attachments(comment_id);

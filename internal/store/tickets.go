@@ -253,6 +253,11 @@ func (s *Store) SaveTicket(input SaveTicketInput) (SaveTicketResult, error) {
 		if err := updateTicketTx(tx, current); err != nil {
 			return SaveTicketResult{}, err
 		}
+		if current.Status != previous.Status {
+			if err := addTicketStatusChangeTx(tx, current.ID, actor.ID, previous.Status, current.Status, now); err != nil {
+				return SaveTicketResult{}, err
+			}
+		}
 	}
 	if hasComment {
 		comment, publicComment, err := normalizeComment(*input.Comment, hasAttachments)
@@ -527,6 +532,16 @@ func addCommentTx(tx *sql.Tx, id int64, input AddComment, author User, now time.
 	return insertedID(result)
 }
 
+func addTicketStatusChangeTx(tx *sql.Tx, ticketID, actorUserID int64, previous, current string, now time.Time) error {
+	_, err := tx.Exec(`
+		INSERT INTO ticket_status_changes (
+			ticket_id, actor_user_id, previous_status, current_status, created_at
+		) VALUES (?, ?, ?, ?, ?)`,
+		ticketID, actorUserID, previous, current, formatTime(now),
+	)
+	return err
+}
+
 func updateTicketTimestampTx(tx *sql.Tx, id int64, now time.Time) error {
 	result, err := tx.Exec(`UPDATE tickets SET updated_at = ? WHERE id = ?`, formatTime(now), id)
 	if err != nil {
@@ -720,6 +735,7 @@ func hydrateTicketWithQuery(queryer ticketQueryer, ticket *Ticket) error {
 	ticket.Key = fmt.Sprintf("%s-%d", ticket.ProductKey, ticket.Number)
 	ticket.Attachments = nil
 	ticket.Comments = nil
+	ticket.StatusChanges = nil
 
 	commentRows, err := queryer.Query(`
 		SELECT c.id, COALESCE(NULLIF(author_by_id.display_name, ''), c.author), c.author_user_id, c.body, c.visibility, c.created_at
@@ -748,6 +764,33 @@ func hydrateTicketWithQuery(queryer ticketQueryer, ticket *Ticket) error {
 		ticket.Comments = append(ticket.Comments, comment)
 	}
 	if err := commentRows.Err(); err != nil {
+		return err
+	}
+
+	statusRows, err := queryer.Query(`
+		SELECT sc.id, sc.actor_user_id, COALESCE(NULLIF(u.display_name, ''), u.email),
+		       sc.previous_status, sc.current_status, sc.created_at
+		FROM ticket_status_changes sc
+		JOIN users u ON u.id = sc.actor_user_id
+		WHERE sc.ticket_id = ?
+		ORDER BY sc.created_at, sc.id`, ticket.ID)
+	if err != nil {
+		return err
+	}
+	defer statusRows.Close()
+	for statusRows.Next() {
+		var change TicketStatusChange
+		var created dbTime
+		if err := statusRows.Scan(
+			&change.ID, &change.ActorUserID, &change.ActorName,
+			&change.PreviousStatus, &change.CurrentStatus, &created,
+		); err != nil {
+			return err
+		}
+		change.CreatedAt = created.Time
+		ticket.StatusChanges = append(ticket.StatusChanges, change)
+	}
+	if err := statusRows.Err(); err != nil {
 		return err
 	}
 

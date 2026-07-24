@@ -267,12 +267,11 @@ async function refreshSelectedTicket(ticketId, previousConversationRevision) {
     throw error;
   }
   if (state.selectedId !== ticketId || state.view !== "tickets") return;
-  applySelectedTicketRefresh(updated, previousConversationRevision);
+  applySelectedTicketUpdate(updated, previousConversationRevision);
 }
 
-function applySelectedTicketRefresh(updated, previousConversationRevision) {
+function applySelectedTicketUpdate(updated, previousConversationRevision) {
   if (!updated?.id || state.selectedId !== updated.id || state.view !== "tickets") return;
-  setSelectedTicket(updated, { updateRoute: false });
   replaceTicket(updated);
   if (ticketConversationRevision(updated) === previousConversationRevision) return;
   if (replaceTicketConversation(updated)) {
@@ -322,6 +321,14 @@ function ticketConversationRevision(ticket) {
       comment.visibility || "",
       comment.created_at || "",
       attachmentRevision(comment.attachments)
+    ]),
+    (ticket.status_changes || []).map((change) => [
+      change.id,
+      change.actor_user_id || 0,
+      change.actor_name || "",
+      change.previous_status || "",
+      change.current_status || "",
+      change.created_at || ""
     ])
   ]);
 }
@@ -1175,7 +1182,6 @@ function bindTicketAutosave(form, ticket) {
         if (statusChanged || assigneeChanged) {
           await loadTickets({ renderDetail: false });
         } else {
-          replaceTicket(updated);
           renderTicketList();
         }
       } catch (error) {
@@ -1197,7 +1203,7 @@ function bindTicketAutosave(form, ticket) {
 
 async function saveTicketPatch(ticket, patch) {
   const updated = await request(`/api/tickets/${ticket.id}`, { method: "PATCH", body: JSON.stringify(patch) });
-  if (state.selectedId === updated.id) setSelectedTicket(updated, { updateRoute: false });
+  applySelectedTicketUpdate(updated, ticketConversationRevision(ticket));
   return updated;
 }
 
@@ -1391,6 +1397,10 @@ function comments(ticket) {
   const messages = conversationMessages(ticket);
   const unreadIndex = firstUnreadMessageIndex(ticket, messages);
   messages.forEach((message, index) => {
+    if (message.statusChange) {
+      list.append(statusChangeRow(message));
+      return;
+    }
     if (index === unreadIndex) {
       list.append(unreadDivider());
     }
@@ -1429,6 +1439,7 @@ function conversationMessages(ticket) {
     visibility: "public",
     attachments: ticket.attachments || [],
     createdAt: ticket.created_at,
+    timelineOrder: 0,
     side: isCurrentUserMessage(ticket, { opening: true }) ? "current" : "other",
     className: "opening-message"
   }];
@@ -1443,11 +1454,36 @@ function conversationMessages(ticket) {
       visibility: internal ? "internal" : "public",
       attachments: comment.attachments || [],
       createdAt: comment.created_at,
+      timelineOrder: 2,
       side: isCurrentUserMessage(ticket, comment) ? "current" : "other",
       className: internal ? "internal" : ""
     });
   }
-  return messages;
+  for (const change of ticket.status_changes || []) {
+    messages.push({
+      statusChange: true,
+      actor: change.actor_name || "Support",
+      previousStatus: change.previous_status,
+      currentStatus: change.current_status,
+      label: conversationTimestamp(change.created_at),
+      createdAt: change.created_at,
+      timelineOrder: 1
+    });
+  }
+  return messages.sort((a, b) => {
+    return timestampValue(a.createdAt) - timestampValue(b.createdAt) ||
+      a.timelineOrder - b.timelineOrder;
+  });
+}
+
+function statusChangeRow(change) {
+  return el("div", {
+    className: "conversation-status-change",
+    title: change.label
+  }, el("span", {}, [
+    el("strong", {}, change.actor),
+    ` changed status from ${labelize(change.previousStatus)} to ${labelize(change.currentStatus)}`
+  ]));
 }
 
 function conversationTimestamp(value) {
@@ -1461,7 +1497,7 @@ function firstUnreadMessageIndex(ticket, messages) {
   if (!ticket.has_unread && selectedBoundary === null) return -1;
   const lastRead = timestampValue(selectedBoundary ?? ticket.last_read_at);
   return messages.findIndex((message) => {
-    return message.side !== "current" && timestampValue(message.createdAt) > lastRead;
+    return !message.statusChange && message.side !== "current" && timestampValue(message.createdAt) > lastRead;
   });
 }
 

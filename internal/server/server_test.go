@@ -2065,6 +2065,10 @@ func TestStaffCreatesTicketForCustomer(t *testing.T) {
 	if notification.Event != "ticket.created" {
 		t.Fatalf("requester notification = %#v", notification)
 	}
+	resp, body = doJSON(t, client, http.MethodPatch, server.URL+"/api/tickets/"+itoa(created.ID), map[string]any{
+		"status": "assigned",
+	}, staffCookie, staffCSRF, server.URL)
+	requireStatus(t, resp, body, http.StatusOK)
 	resp, body = doJSON(t, client, http.MethodDelete, server.URL+"/api/users/"+itoa(customerID), nil, adminCookie, adminCSRF, server.URL)
 	requireStatus(t, resp, body, http.StatusConflict)
 	if !bytes.Contains(body, []byte("disable it instead")) {
@@ -2080,6 +2084,10 @@ func TestStaffCreatesTicketForCustomer(t *testing.T) {
 	}
 	if customerTicket.Title != "Opened by support" || customerTicket.CreatedByUserID != staffID || customerTicket.CreatedByName != "Support" || !customerTicket.HasUnread {
 		t.Fatalf("customer cannot see staff-created ticket: %s", body)
+	}
+	if got := customerTicket.StatusChanges; len(got) != 1 || got[0].ActorUserID != staffID ||
+		got[0].ActorName != "Support" || got[0].PreviousStatus != "new" || got[0].CurrentStatus != "assigned" {
+		t.Fatalf("customer status history = %#v", got)
 	}
 	resp, body = doJSON(t, client, http.MethodPost, server.URL+"/api/tickets", map[string]any{
 		"product_id":        productID,

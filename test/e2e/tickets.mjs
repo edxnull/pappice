@@ -341,6 +341,10 @@ async function staffReplyAndResolve(cdp) {
       throw new Error("live ticket refresh should preserve the local reply draft");
     }
     setValue(detail.querySelector("[name='status']"), "resolved");
+    await waitFor(() => {
+      return [...detail.querySelectorAll(".conversation-status-change")]
+        .some((change) => change.textContent.includes("changed status from New to Resolved"));
+    }, "live status change in conversation");
     setValue(detail.querySelector("[name='body']"), input.reply);
     const composer = detail.querySelector(".comment-form");
     pasteFiles(detail.querySelector("[name='body']"), [
