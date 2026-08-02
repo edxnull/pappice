@@ -154,6 +154,12 @@ The local quality gate is:
 scripts/check.sh
 ```
 
+The script runs race-enabled tests when the current Go target supports them and
+browser tests when Chromium or Chrome is available. Unsupported optional checks
+are reported and skipped so the gate remains useful across Android/Termux,
+Linux, and macOS. Set `PAPPICE_CHECK_STRICT=1` to require every check; releases
+always use this strict mode.
+
 Use focused tests for store invariants and HTTP contract tests for handler
 behavior. Avoid sleeps in tests when a state transition can be forced directly.
 

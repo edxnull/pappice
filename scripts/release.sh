@@ -104,7 +104,7 @@ verify_checksum() {
 require_cmd git
 require_cmd go
 
-scripts/check.sh
+PAPPICE_CHECK_STRICT=1 scripts/check.sh
 
 version="$(tr -d '[:space:]' < VERSION)"
 if [[ -z "$version" ]]; then
