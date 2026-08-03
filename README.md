@@ -87,9 +87,9 @@ Run the complete local quality gate with:
 scripts/check.sh
 ```
 
-The E2E test requires Node, OpenSSL, and Chromium. Set
-`PAPPICE_E2E_CHROMIUM=/path/to/chromium` when Chromium is not at
-`/usr/bin/chromium`.
+The E2E test requires Node 22+, OpenSSL, and Chromium or Chrome. The launcher
+searches `PATH` and standard macOS application locations. Set
+`PAPPICE_E2E_CHROMIUM=/path/to/chromium` to override discovery.
 
 See [benchmark/README.md](./benchmark/README.md) for the repeatable small-instance
 memory benchmark. Debug builds can expose Go's standard pprof endpoints on an

@@ -8,6 +8,8 @@ import path from "node:path";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { generateCertificate } from "../test/tools/local-certificate.mjs";
+
 const benchmarkDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(benchmarkDir, "..");
 
@@ -433,20 +435,6 @@ async function waitForHTTPS(url, child, timeoutMs = 30_000) {
   throw new Error(`app did not become ready: ${lastError?.message || "timeout"}\n${child.outputText()}`);
 }
 
-async function generateCertificate(certPath, keyPath) {
-  await runCommand("openssl", [
-    "req",
-    "-x509",
-    "-newkey", "rsa:2048",
-    "-nodes",
-    "-keyout", keyPath,
-    "-out", certPath,
-    "-days", "1",
-    "-subj", "/CN=127.0.0.1",
-    "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost"
-  ], { cwd: repoRoot });
-}
-
 async function runCommand(command, args, options = {}) {
   const child = spawn(command, args, {
     ...options,
@@ -476,7 +464,7 @@ async function freePort() {
 }
 
 async function readRSS(pid) {
-  if (os.platform() === "linux") {
+  if (os.platform() === "linux" || os.platform() === "android") {
     const status = await readFile(`/proc/${pid}/status`, "utf8");
     const match = status.match(/^VmRSS:\s+(\d+)\s+kB$/m);
     if (!match) throw new Error(`VmRSS not found for pid ${pid}`);

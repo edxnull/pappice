@@ -13,7 +13,14 @@ fi
 target_os="${GOOS:-linux}"
 target_arch="${GOARCH:-amd64}"
 dist_dir="dist"
-binary="$dist_dir/pappice-${target_os}-${target_arch}"
+binary_suffix=""
+package_binary="pappice"
+if [[ "$target_os" == "windows" ]]; then
+  binary_suffix=".exe"
+  package_binary="pappice.exe"
+fi
+binary="$dist_dir/pappice-${target_os}-${target_arch}${binary_suffix}"
+unsuffixed_binary="$dist_dir/pappice-${target_os}-${target_arch}"
 archive_root="pappice-${version}-${target_os}-${target_arch}"
 package_dir="$dist_dir/$archive_root"
 archive="$dist_dir/$archive_root.tar.gz"
@@ -30,7 +37,7 @@ sha256_file() {
   fi
 }
 
-rm -rf "$package_dir" "$archive" "$checksum" "$binary" "$legacy_binary" "$legacy_archive" "$legacy_checksum"
+rm -rf "$package_dir" "$archive" "$checksum" "$binary" "$unsuffixed_binary" "$legacy_binary" "$legacy_archive" "$legacy_checksum"
 mkdir -p "$dist_dir" "$package_dir"
 
 CGO_ENABLED="${CGO_ENABLED:-0}" GOOS="$target_os" GOARCH="$target_arch" go build \
@@ -39,7 +46,7 @@ CGO_ENABLED="${CGO_ENABLED:-0}" GOOS="$target_os" GOARCH="$target_arch" go build
   -o "$binary" \
   ./cmd/pappice
 
-install -m 0755 "$binary" "$package_dir/pappice"
+install -m 0755 "$binary" "$package_dir/$package_binary"
 install -m 0644 VERSION LICENSE README.md CHANGELOG.md "$package_dir/"
 install -m 0644 .env.example "$package_dir/.env.example"
 mkdir -p "$package_dir/deploy/env" "$package_dir/deploy/nginx" "$package_dir/deploy/systemd" "$package_dir/docs"

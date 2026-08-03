@@ -7,11 +7,17 @@ import path from "node:path";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { findChromium } from "./chromium.mjs";
+import { generateCertificate } from "./local-certificate.mjs";
+
 const toolDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(toolDir, "../..");
-const defaultChromiumPath = process.env.PAPPICE_E2E_CHROMIUM || process.env.CHROMIUM || "/usr/bin/chromium";
 
 async function startLocalPappice(options = {}) {
+  const chromiumPath = findChromium(options.chromiumPath);
+  if (!chromiumPath) {
+    throw new Error("Chromium was not found; set PAPPICE_E2E_CHROMIUM to its executable");
+  }
   const tempPrefix = options.tempPrefix || "pappice-local-";
   const tempDir = await mkdtemp(path.join(tmpdir(), tempPrefix));
   const certPath = path.join(tempDir, "localhost.pem");
@@ -51,7 +57,7 @@ async function startLocalPappice(options = {}) {
     const chromePort = await freePort();
     state.chromeProcess = startChromium({
       appURL,
-      chromiumPath: options.chromiumPath || defaultChromiumPath,
+      chromiumPath,
       port: chromePort,
       userDataDir: path.join(tempDir, "chrome"),
       viewport: options.viewport
@@ -285,20 +291,6 @@ async function httpsStatus(url) {
     });
     request.on("error", reject);
   });
-}
-
-async function generateCertificate(certPath, keyPath) {
-  await runCommand("openssl", [
-    "req",
-    "-x509",
-    "-newkey", "rsa:2048",
-    "-nodes",
-    "-keyout", keyPath,
-    "-out", certPath,
-    "-days", "1",
-    "-subj", "/CN=127.0.0.1",
-    "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost"
-  ], { cwd: repoRoot });
 }
 
 async function runCommand(command, args, options = {}) {

@@ -6,6 +6,9 @@ Run the small production-shape memory benchmark with:
 npm run bench:small
 ```
 
+The benchmark requires Go 1.26+, Node 22+, and OpenSSL. RSS sampling supports
+Linux, Android/Termux, and macOS.
+
 It builds the current source, starts an isolated HTTPS Pappice instance with a
 temporary SQLite database, seeds a small support desk, keeps authenticated
 customer and staff sessions active, and samples the Pappice process RSS.

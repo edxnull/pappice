@@ -21,43 +21,6 @@ skip_or_fail() {
   echo "Skipping optional check: $message" >&2
 }
 
-find_chromium() {
-  local configured="${PAPPICE_E2E_CHROMIUM:-${CHROMIUM:-}}"
-  local candidates=()
-  local candidate resolved
-
-  if [[ -n "$configured" ]]; then
-    candidates=("$configured")
-  else
-    candidates=(chromium chromium-browser google-chrome-stable google-chrome)
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-      candidates+=(
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        "/Applications/Chromium.app/Contents/MacOS/Chromium"
-        "$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        "$HOME/Applications/Chromium.app/Contents/MacOS/Chromium"
-      )
-    fi
-  fi
-
-  for candidate in "${candidates[@]}"; do
-    if resolved="$(command -v "$candidate" 2>/dev/null)"; then
-      printf '%s\n' "$resolved"
-      return 0
-    fi
-    if [[ "$candidate" == */* && -x "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-
-  if [[ -n "$configured" ]]; then
-    echo "Configured Chromium executable was not found: $configured" >&2
-    return 2
-  fi
-  return 1
-}
-
 unformatted="$(find cmd internal -type f -name '*.go' -exec gofmt -l {} +)"
 if [[ -n "$unformatted" ]]; then
   printf 'Run gofmt on:\n%s\n' "$unformatted" >&2
@@ -87,9 +50,9 @@ trap - EXIT
 
 go test -tags debug ./cmd/pappice
 
-if ! command -v npm >/dev/null 2>&1; then
-  skip_or_fail "npm is unavailable"
-elif chromium="$(find_chromium)"; then
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+  skip_or_fail "Node.js or npm is unavailable"
+elif chromium="$(node test/tools/chromium.mjs)"; then
   PAPPICE_E2E_CHROMIUM="$chromium" npm run test:e2e
 else
   chromium_status=$?

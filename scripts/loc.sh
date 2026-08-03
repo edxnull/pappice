@@ -129,7 +129,7 @@ fi
 printf "Pappice LOC (%s)\n\n" "$source_label"
 awk -F '\t' -v show_files="$show_files" '
 BEGIN {
-  split("backend frontend tests scripts ops-config docs other", order, " ")
+  order_count = split("backend frontend tests scripts ops-config docs other", order, " ")
 }
 {
   category = $1
@@ -147,7 +147,7 @@ BEGIN {
 END {
   printf "%-11s %7s %9s %9s\n", "category", "files", "lines", "nonblank"
   printf "%-11s %7s %9s %9s\n", "--------", "-----", "-----", "--------"
-  for (i = 1; i <= length(order); i++) {
+  for (i = 1; i <= order_count; i++) {
     category = order[i]
     if (files_by_category[category] == 0) {
       continue
@@ -160,7 +160,7 @@ END {
   if (show_files == 1) {
     printf "\n%-11s %7s %9s  %s\n", "category", "lines", "nonblank", "file"
     printf "%-11s %7s %9s  %s\n", "--------", "-----", "--------", "----"
-    for (i = 1; i <= length(order); i++) {
+    for (i = 1; i <= order_count; i++) {
       category = order[i]
       printf "%s", file_rows[category]
     }
